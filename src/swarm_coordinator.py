@@ -1,113 +1,54 @@
 import asyncio
-from typing import Dict, List, Optional
-from dataclasses import dataclass
-from enum import Enum
+import random
+import uuid
 
-class TaskPriority(Enum):
-    LOW = 0
-    MEDIUM = 1
-    HIGH = 2
-    CRITICAL = 3
+class SwarmerNode:
+    def __init__(self, node_id, connection_pool):
+        self.node_id = node_id
+        self.connection_pool = connection_pool
+        self.tasks = []
 
-@dataclass
-class Task:
-    id: str
-    priority: TaskPriority
-    compute_units: float
-    data: dict
-    assigned_node: Optional[str] = None
-    status: str = 'pending'
+    async def coordinate_swarm(self):
+        while True:
+            await self.process_tasks()
+            await asyncio.sleep(random.uniform(1, 5))
+
+    async def process_tasks(self):
+        for task in self.tasks:
+            await self.execute_task(task)
+        self.tasks = []
+
+    async def execute_task(self, task):
+        print(f'Swarmer node {self.node_id} executing task: {task}')
+        # Implement task execution logic here
+        await asyncio.sleep(random.uniform(1, 3))
+
+    def add_task(self, task):
+        self.tasks.append(task)
 
 class SwarmCoordinator:
-    def __init__(self):
-        self.nodes: Dict[str, dict] = {}
-        self.tasks: Dict[str, Task] = {}
-        self.load_threshold = 0.8
+    def __init__(self, node_count=3):
+        self.node_count = node_count
+        self.connection_pool = []
+        self.swarmers = []
+        self.setup_swarm()
 
-    async def register_node(self, node_id: str, capabilities: dict):
-        self.nodes[node_id] = {
-            'capabilities': capabilities,
-            'current_load': 0.0,
-            'tasks': []
-        }
+    def setup_swarm(self):
+        for _ in range(self.node_count):
+            node_id = str(uuid.uuid4())
+            swarm_node = SwarmerNode(node_id, self.connection_pool)
+            self.swarmers.append(swarm_node)
+            asyncio.create_task(swarm_node.coordinate_swarm())
 
-    async def remove_node(self, node_id: str):
-        if node_id in self.nodes:
-            # Reassign tasks from failing node
-            tasks_to_reassign = self.nodes[node_id]['tasks']
-            del self.nodes[node_id]
-            for task_id in tasks_to_reassign:
-                await self.reassign_task(task_id)
+    async def coordinate_tasks(self, tasks):
+        for task in tasks:
+            await self.assign_task(task)
 
-    async def submit_task(self, task: Task) -> str:
-        self.tasks[task.id] = task
-        await self.assign_task(task)
-        return task.id
+    async def assign_task(self, task):
+        selected_node = random.choice(self.swarmers)
+        selected_node.add_task(task)
 
-    async def assign_task(self, task: Task):
-        best_node = await self._find_optimal_node(task)
-        if best_node:
-            task.assigned_node = best_node
-            self.nodes[best_node]['tasks'].append(task.id)
-            self.nodes[best_node]['current_load'] += task.compute_units
-
-    async def _find_optimal_node(self, task: Task) -> Optional[str]:
-        available_nodes = []
-        for node_id, node in self.nodes.items():
-            if node['current_load'] + task.compute_units <= self.load_threshold:
-                available_nodes.append((node_id, node))
-
-        if not available_nodes:
-            return None
-
-        # Sort by current load and capabilities match
-        sorted_nodes = sorted(available_nodes, 
-                             key=lambda x: (x[1]['current_load'], 
-                                          -self._calculate_capability_score(x[1], task)))
-        return sorted_nodes[0][0] if sorted_nodes else None
-
-    def _calculate_capability_score(self, node: dict, task: Task) -> float:
-        # Calculate how well node capabilities match task requirements
-        # This is a simplified scoring - enhance based on specific requirements
-        base_score = 1.0
-        if task.priority == TaskPriority.CRITICAL:
-            if node['capabilities'].get('high_reliability', False):
-                base_score *= 1.5
-        return base_score
-
-    async def reassign_task(self, task_id: str):
-        task = self.tasks[task_id]
-        task.status = 'reassigning'
-        await self.assign_task(task)
-
-    async def monitor_load(self):
-        while True:
-            await self._balance_load()
-            await asyncio.sleep(30)  # Check every 30 seconds
-
-    async def _balance_load(self):
-        overloaded = [node_id for node_id, node in self.nodes.items() 
-                      if node['current_load'] > self.load_threshold]
-
-        for node_id in overloaded:
-            tasks = sorted(self.nodes[node_id]['tasks'],
-                         key=lambda t: self.tasks[t].priority.value)
-            for task_id in tasks:
-                await self.reassign_task(task_id)
-                if self.nodes[node_id]['current_load'] <= self.load_threshold:
-                    break
-
-    async def get_system_status(self) -> dict:
-        return {
-            'total_nodes': len(self.nodes),
-            'total_tasks': len(self.tasks),
-            'load_distribution': {
-                node_id: node['current_load']
-                for node_id, node in self.nodes.items()
-            },
-            'task_priorities': {
-                priority: len([t for t in self.tasks.values() 
-                             if t.priority == priority])
-                for priority in TaskPriority
-            }
-        }
+# Example usage
+coordinator = SwarmCoordinator()
+tasks = ['Curate visual diary', 'Organize media assets', 'Generate weekly summary']
+asyncio.create_task(coordinator.coordinate_tasks(tasks))
